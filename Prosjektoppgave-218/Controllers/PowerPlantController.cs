@@ -1,14 +1,17 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Prosjektoppgave_218.Models;
+using Oppgave_2_218.Models;
+using Oppgave_2_218.Services;
+using System;
+using System.Threading.Tasks;
 
-namespace Prosjektoppgave_218.Controllers
+namespace Oppgave_2_218.Controllers
 {
-    public class MapController : Controller
+    public class PowerPlantController : Controller
     {
         private readonly PowerPlantService _powerPlantService;
-        private readonly ILogger<MapController> _logger;
+        private readonly ILogger<PowerPlantController> _logger;
 
-        public MapController(PowerPlantService powerPlantService, ILogger<MapController> logger)
+        public PowerPlantController(PowerPlantService powerPlantService, ILogger<PowerPlantController> logger)
         {
             _powerPlantService = powerPlantService;
             _logger = logger;

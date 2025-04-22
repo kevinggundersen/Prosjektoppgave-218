@@ -3,6 +3,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 
+// Register the PowerPlantService
+builder.Services.AddScoped<Oppgave_2_218.Services.PowerPlantService>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

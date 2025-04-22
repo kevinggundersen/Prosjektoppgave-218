@@ -18,5 +18,14 @@ html {
 }
 
 body {
-  margin-bottom: 60px;
+  margin-bottom: 30px;
+}
+#map {
+    height: 80vh;
+    width: 100%;
+}
+
+.blend-layer {
+    mix-blend-mode: multiply;
+    filter: invert(100%);
 }

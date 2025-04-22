@@ -1,0 +1,169 @@
+﻿@{
+    ViewData["Title"] = "Power Plant Map";
+}
+
+<div class="container-fluid">
+    <h1>Power Plant Map</h1>
+
+    <div id="map" style="height: 600px; width: 100%;"></div>
+</div>
+
+@section Styles {
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin="" />
+
+    <!-- Leaflet Control Geocoder CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+}
+
+@section Scripts {
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+
+    <!-- Leaflet Control Geocoder plugin -->
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+
+    <script>
+        // Initialize the map centered on Norway
+        var map = L.map('map').setView([58.1633, 8.0025], 8);
+
+        // Create layer group for power plants
+        var powerPlantsLayer = L.layerGroup();
+
+        //Kartverket
+        var kartverket = L.tileLayer('https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png', {
+            maxZoom: 19,
+            attribution: '&copy; Kartverket</a>'
+        }).addTo(map);
+
+        // Tilelayer for wind resources
+        var windSource = L.tileLayer.wms("https://nve.geodataonline.no/arcgis/services/Vindressurser/MapServer/WMSServer", {
+            layers: "Gj.snittlig_vindstyrke_120m_over_bakkeniva",
+            format: "image/png",
+            transparent: true,
+            attribution: "NVE Geodata Online",
+            opacity: 1
+        }).addTo(map);
+
+        // Add the WMS layer for terrain complexity
+        var terrainComp = L.tileLayer.wms("https://nve.geodataonline.no/arcgis/services/Vindressurser/MapServer/WMSServer", {
+            layers: "Terrengkompleksitet_RIX",
+            format: "image/png",
+            transparent: true,
+            attribution: "NVE Geodata Online",
+            opacity: 1,
+            className: 'blend-layer'
+        }).addTo(map);
+
+        //Google labels
+        var googleLabels = L.tileLayer('https://mt1.google.com/vt/lyrs=h&x={x}&y={y}&z={z}', {
+            maxZoom: 19,
+            attribution: '&copy; Google</a>'
+        }).addTo(map);
+
+        // Add Miljødirektoratet protected areas WMS layer
+        var protectedAreasWMS = L.tileLayer.wms("https://kart.miljodirektoratet.no/arcgis/services/vern/mapserver/WMSServer", {
+            layers: "naturvern_omrade", // You may need to adjust these layer numbers based on the GetCapabilities response
+            format: "image/png",
+            transparent: true,
+            attribution: "Miljødirektoratet",
+            opacity: 1
+        });
+
+        // Layer control
+        var baseMaps = {
+            "Kartverket": kartverket
+        };
+
+        var overlayMaps = {
+            "Wind Resources": windSource,
+            "Terrain Complexity": terrainComp,
+            "Google Labels": googleLabels,
+            "Protected Areas": protectedAreasWMS,
+            "Power Plants": powerPlantsLayer  // Add our power plants layer group
+        };
+
+        // Add power plants layer to the map
+        map.addLayer(powerPlantsLayer);
+
+        // Create the layer control and add it to the map
+        var layerControl = L.control.layers(baseMaps, overlayMaps).addTo(map);
+
+        // Initially hide terrain complexity layer
+        map.removeLayer(terrainComp);
+
+        // Function to create popup content
+        function createPopupContent(feature) {
+            const props = feature.properties;
+            return `
+                        <div class="popup-content">
+                            <h5>${props.name}</h5>
+                            <p><strong>Status:</strong> ${props.status}</p>
+                            <p><strong>Effect:</strong> ${props.effect} MW</p>
+                            <p><strong>Municipality:</strong> ${props.municipality}</p>
+                            <p><strong>County:</strong> ${props.county}</p>
+                            <a href="/PowerPlant/Details/${props.id}" class="btn btn-sm btn-info">Details</a>
+                        </div>
+                    `;
+        }
+
+        // Function to determine marker color based on status
+        function getColor(status) {
+            if (status === 'I drift') return '#28a745'; // Green for operational
+            if (status === 'Under bygging') return '#ffc107'; // Yellow for under construction
+            return '#007bff'; // Blue default
+        }
+
+        // Fetch GeoJSON data from our API endpoint
+        fetch('/PowerPlant/GeoJson')
+            .then(response => response.json())
+            .then(data => {
+                console.log('GeoJSON data received:', data);
+                console.log('Features count:', data.features ? data.features.length : 0);
+
+                // Add GeoJSON layer to power plants layer group instead of directly to map
+                L.geoJSON(data, {
+                    pointToLayer: function (feature, latlng) {
+                        console.log('Processing feature:', feature);
+                        return L.circleMarker(latlng, {
+                            radius: 8,
+                            fillColor: getColor(feature.properties.status),
+                            color: '#000',
+                            weight: 1,
+                            opacity: 1,
+                            fillOpacity: 0.8
+                        });
+                    },
+                    onEachFeature: function (feature, layer) {
+                        layer.bindPopup(createPopupContent(feature));
+                    }
+                }).addTo(powerPlantsLayer); // Add to layer group instead of map
+            })
+            .catch(error => {
+                console.error('Error loading GeoJSON data:', error);
+                alert('Failed to load map data. Please try again later.');
+            });
+
+        // Add geocoder control for location search functionality
+        var geocoder = L.Control.geocoder({
+            defaultMarkGeocode: false, // Disable default marker
+            placeholder: "Søk..."
+        }).addTo(map);
+
+        // Add tooltip to geocoder control
+        geocoder.getContainer().setAttribute('title', 'Søk etter steder');
+
+        // Handle geocoding results
+        geocoder.on('markgeocode', function (e) {
+            var latlng = e.geocode.center;
+            map.setView(latlng, 16); // Zoom to location
+            L.marker(latlng).addTo(map) // Add marker
+                .bindPopup(e.geocode.name)
+                .openPopup();
+        });
+    </script>
+}
