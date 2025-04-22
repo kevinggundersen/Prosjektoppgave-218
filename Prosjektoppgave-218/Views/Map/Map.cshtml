@@ -1,9 +1,9 @@
 ﻿@{
-    ViewData["Title"] = "Map";
+    ViewData["Title"] = "Kart";
 }
 
 <div class="container-fluid">
-    <h1>Map</h1>
+    <h1>Kart</h1>
 
     <div id="map" style="height: 600px; width: 100%;"></div>
 </div>
@@ -93,7 +93,7 @@
         }
 
         // Fetch GeoJSON data from our API endpoint
-        fetch('/PowerPlant/GeoJson')
+        fetch('/Map/GeoJson')
             .then(response => response.json())
             .then(data => {
                 console.log('GeoJSON data received:', data);

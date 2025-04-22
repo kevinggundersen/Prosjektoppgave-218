@@ -1,13 +1,13 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RestSharp;
-using Oppgave_2_218.Models;
+using Prosjektoppgave_218.Models;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Linq;
 
-namespace Oppgave_2_218.Services
+namespace Prosjektoppgave_218.Services
 {
     public class MapService
     {

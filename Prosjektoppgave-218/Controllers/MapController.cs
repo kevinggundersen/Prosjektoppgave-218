@@ -1,10 +1,10 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Oppgave_2_218.Models;
-using Oppgave_2_218.Services;
+using Prosjektoppgave_218.Models;
+using Prosjektoppgave_218.Services;
 using System;
 using System.Threading.Tasks;
 
-namespace Oppgave_2_218.Controllers
+namespace Prosjektoppgave_218.Controllers
 {
     public class MapController : Controller
     {
@@ -28,11 +28,7 @@ namespace Oppgave_2_218.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving power plants");
-                return View("Error", new ErrorViewModel
-                {
-                    RequestId = System.Diagnostics.Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                    Message = "Failed to retrieve power plant data."
-                });
+                return View("Map");
             }
         }
 
@@ -74,11 +70,7 @@ namespace Oppgave_2_218.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error retrieving power plant with ID {id}");
-                return View("Error", new ErrorViewModel
-                {
-                    RequestId = System.Diagnostics.Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                    Message = $"Failed to retrieve power plant with ID {id}."
-                });
+                return View("Map");
             }
         }
 
@@ -94,11 +86,7 @@ namespace Oppgave_2_218.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error retrieving power plants for municipality {municipality}");
-                return View("Error", new ErrorViewModel
-                {
-                    RequestId = System.Diagnostics.Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                    Message = $"Failed to retrieve power plants for municipality {municipality}."
-                });
+                return View("Map");
             }
         }
 
@@ -114,11 +102,7 @@ namespace Oppgave_2_218.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error retrieving power plants for county {county}");
-                return View("Error", new ErrorViewModel
-                {
-                    RequestId = System.Diagnostics.Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                    Message = $"Failed to retrieve power plants for county {county}."
-                });
+                return View("Map");
             }
         }
 
@@ -134,11 +118,7 @@ namespace Oppgave_2_218.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error retrieving power plants with status {status}");
-                return View("Error", new ErrorViewModel
-                {
-                    RequestId = System.Diagnostics.Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                    Message = $"Failed to retrieve power plants with status {status}."
-                });
+                return View("Map");
             }
         }
 
@@ -154,11 +134,7 @@ namespace Oppgave_2_218.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error retrieving power plants with minimum effect {minEffect}");
-                return View("Error", new ErrorViewModel
-                {
-                    RequestId = System.Diagnostics.Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                    Message = $"Failed to retrieve power plants with minimum effect {minEffect}."
-                });
+                return View("Map");
             }
         }
     }

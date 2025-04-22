@@ -2,7 +2,7 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace Oppgave_2_218.Models
+namespace Prosjektoppgave_218.Models
 {
     /// <summary>
     /// Model representing power plant data with geospatial information
