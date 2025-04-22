@@ -1,9 +1,9 @@
 ﻿@{
-    ViewData["Title"] = "Power Plant Map";
+    ViewData["Title"] = "Map";
 }
 
 <div class="container-fluid">
-    <h1>Power Plant Map</h1>
+    <h1>Map</h1>
 
     <div id="map" style="height: 600px; width: 100%;"></div>
 </div>
@@ -32,6 +32,7 @@
         var map = L.map('map').setView([58.1633, 8.0025], 8);
 
         // Create layer group for power plants
+        // Known otherwise as TestLayer and is not shown in layer list in project
         var powerPlantsLayer = L.layerGroup();
 
         //Kartverket
@@ -40,24 +41,7 @@
             attribution: '&copy; Kartverket</a>'
         }).addTo(map);
 
-        // Tilelayer for wind resources
-        var windSource = L.tileLayer.wms("https://nve.geodataonline.no/arcgis/services/Vindressurser/MapServer/WMSServer", {
-            layers: "Gj.snittlig_vindstyrke_120m_over_bakkeniva",
-            format: "image/png",
-            transparent: true,
-            attribution: "NVE Geodata Online",
-            opacity: 1
-        }).addTo(map);
 
-        // Add the WMS layer for terrain complexity
-        var terrainComp = L.tileLayer.wms("https://nve.geodataonline.no/arcgis/services/Vindressurser/MapServer/WMSServer", {
-            layers: "Terrengkompleksitet_RIX",
-            format: "image/png",
-            transparent: true,
-            attribution: "NVE Geodata Online",
-            opacity: 1,
-            className: 'blend-layer'
-        }).addTo(map);
 
         //Google labels
         var googleLabels = L.tileLayer('https://mt1.google.com/vt/lyrs=h&x={x}&y={y}&z={z}', {
@@ -65,14 +49,7 @@
             attribution: '&copy; Google</a>'
         }).addTo(map);
 
-        // Add Miljødirektoratet protected areas WMS layer
-        var protectedAreasWMS = L.tileLayer.wms("https://kart.miljodirektoratet.no/arcgis/services/vern/mapserver/WMSServer", {
-            layers: "naturvern_omrade", // You may need to adjust these layer numbers based on the GetCapabilities response
-            format: "image/png",
-            transparent: true,
-            attribution: "Miljødirektoratet",
-            opacity: 1
-        });
+
 
         // Layer control
         var baseMaps = {
@@ -80,11 +57,8 @@
         };
 
         var overlayMaps = {
-            "Wind Resources": windSource,
-            "Terrain Complexity": terrainComp,
             "Google Labels": googleLabels,
-            "Protected Areas": protectedAreasWMS,
-            "Power Plants": powerPlantsLayer  // Add our power plants layer group
+            //"TestLayer": powerPlantsLayer  // Add our power plants layer group
         };
 
         // Add power plants layer to the map
