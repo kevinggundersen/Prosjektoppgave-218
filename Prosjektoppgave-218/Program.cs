@@ -4,7 +4,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllersWithViews();
 
 // Register the PowerPlantService
-builder.Services.AddScoped<Oppgave_2_218.Services.PowerPlantService>();
+builder.Services.AddScoped<Oppgave_2_218.Services.MapService>();
 
 var app = builder.Build();
 

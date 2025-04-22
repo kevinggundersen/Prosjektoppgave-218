@@ -6,12 +6,12 @@ using System.Threading.Tasks;
 
 namespace Oppgave_2_218.Controllers
 {
-    public class PowerPlantController : Controller
+    public class MapController : Controller
     {
-        private readonly PowerPlantService _powerPlantService;
-        private readonly ILogger<PowerPlantController> _logger;
+        private readonly MapService _powerPlantService;
+        private readonly ILogger<MapController> _logger;
 
-        public PowerPlantController(PowerPlantService powerPlantService, ILogger<PowerPlantController> logger)
+        public MapController(MapService powerPlantService, ILogger<MapController> logger)
         {
             _powerPlantService = powerPlantService;
             _logger = logger;

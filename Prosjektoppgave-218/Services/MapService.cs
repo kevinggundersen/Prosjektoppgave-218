@@ -9,14 +9,14 @@ using System.Linq;
 
 namespace Oppgave_2_218.Services
 {
-    public class PowerPlantService
+    public class MapService
     {
         private readonly string _supabaseUrl;
         private readonly string _supabaseKey;
         private readonly RestClient _client;
         private string _tableName;
 
-        public PowerPlantService(IConfiguration configuration)
+        public MapService(IConfiguration configuration)
         {
             _supabaseUrl = configuration["Supabase:Url"];
             _supabaseKey = configuration["Supabase:ApiKey"];
