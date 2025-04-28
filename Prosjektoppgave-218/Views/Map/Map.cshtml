@@ -70,10 +70,6 @@
             attribution: '&copy; Kartverket'
         }).addTo(map);
 
-        var googleLabels = L.tileLayer('https://mt1.google.com/vt/lyrs=h&x={x}&y={y}&z={z}', {
-            maxZoom: 19,
-            attribution: '&copy; Google'
-        }).addTo(map);
 
         var matrikkelkart = L.tileLayer.wms('https://wms.geonorge.no/skwms1/wms.matrikkelkart', {
             layers: 'Matrikkelkart',
@@ -85,44 +81,11 @@
         // Layer control
         var baseMaps = { "Kartverket": kartverket };
         var overlayMaps = {
-            "Google Labels": googleLabels,
             "Matrikkelkart": matrikkelkart
         };
         var layerControl = L.control.layers(baseMaps, overlayMaps).addTo(map);
 
-        // Power plants layer
-        var powerPlantsLayer = L.layerGroup().addTo(map);
-        layerControl.addOverlay(powerPlantsLayer, "Power Plants");
-        fetch('/Map/GeoJson')
-            .then(r => r.json())
-            .then(data => {
-                L.geoJSON(data, {
-                    pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
-                        radius: 8,
-                        fillColor: feature.properties.status === 'I drift' ? '#28a745'
-                            : feature.properties.status === 'Under bygging' ? '#ffc107'
-                                : '#007bff',
-                        color: '#000',
-                        weight: 1,
-                        opacity: 1,
-                        fillOpacity: 0.8
-                    }),
-                    onEachFeature: (feature, layer) => {
-                        const p = feature.properties;
-                        layer.bindPopup(`
-                      <div>
-                        <h5>${p.name}</h5>
-                        <p><strong>Status:</strong> ${p.status}</p>
-                        <p><strong>Effect:</strong> ${p.effect} MW</p>
-                        <p><strong>Municipality:</strong> ${p.municipality}</p>
-                        <p><strong>County:</strong> ${p.county}</p>
-                        <a href="/PowerPlant/Details/${p.id}" class="btn btn-sm btn-info">Details</a>
-                      </div>
-                    `);
-                    }
-                }).addTo(powerPlantsLayer);
-            })
-            .catch(err => console.error('Error loading power plants:', err));
+        
 
         // Flood zones layer with on-the-fly reprojection
         var floodLayer = L.layerGroup().addTo(map);
