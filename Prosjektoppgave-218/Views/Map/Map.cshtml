@@ -2,8 +2,8 @@
     ViewData["Title"] = "Kart";
 }
 
-<div class="container-fluid">
-    <h1>Kart</h1>
+<div class="container-fluid" id="mapcontainer">
+    <h1></h1>
 
     <div id="map" style="height: 600px; width: 100%;"></div>
 </div>
@@ -27,117 +27,138 @@
     <!-- Leaflet Control Geocoder plugin -->
     <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
 
+    <!-- Proj4 and Proj4Leaflet for reprojecting EPSG:32633 → EPSG:4326 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+
     <script>
-        // Initialize the map centered on Norway
+        // Define UTM zone 33N projection
+        proj4.defs("EPSG:32633", "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs");
+
+        console.log("Map script loaded");
+
+        // Initialize map
         var map = L.map('map').setView([58.1633, 8.0025], 8);
 
-        // Create layer group for power plants
-        // Known otherwise as TestLayer and is not shown in layer list in project
-        var powerPlantsLayer = L.layerGroup();
+        // Helper for WMS GetFeatureInfo
+        function getFeatureInfoUrl(map, latlng, baseUrl, options) {
+            const point = map.latLngToContainerPoint(latlng, map.getZoom());
+            const size = map.getSize();
+            const params = {
+                request: 'GetFeatureInfo',
+                service: 'WMS',
+                srs: 'EPSG:3857',
+                styles: '',
+                transparent: true,
+                version: '1.3.0',
+                format: 'image/png',
+                bbox: map.getBounds().toBBoxString(),
+                height: size.y,
+                width: size.x,
+                layers: options.layers,
+                query_layers: options.query_layers,
+                info_format: options.info_format,
+                i: Math.floor(point.x),
+                j: Math.floor(point.y)
+            };
+            return baseUrl + L.Util.getParamString(params, baseUrl, true);
+        }
 
-        //Kartverket
+        // Base layers
         var kartverket = L.tileLayer('https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png', {
             maxZoom: 19,
-            attribution: '&copy; Kartverket</a>'
+            attribution: '&copy; Kartverket'
         }).addTo(map);
 
-
-
-        //Google labels
         var googleLabels = L.tileLayer('https://mt1.google.com/vt/lyrs=h&x={x}&y={y}&z={z}', {
             maxZoom: 19,
-            attribution: '&copy; Google</a>'
+            attribution: '&copy; Google'
         }).addTo(map);
 
-
+        var matrikkelkart = L.tileLayer.wms('https://wms.geonorge.no/skwms1/wms.matrikkelkart', {
+            layers: 'Matrikkelkart',
+            format: 'image/png',
+            transparent: true,
+            attribution: '&copy; Kartverket'
+        }).addTo(map);
 
         // Layer control
-        var baseMaps = {
-            "Kartverket": kartverket
-        };
-
+        var baseMaps = { "Kartverket": kartverket };
         var overlayMaps = {
             "Google Labels": googleLabels,
-            //"TestLayer": powerPlantsLayer  // Add our power plants layer group
+            "Matrikkelkart": matrikkelkart
         };
-
-        // Add power plants layer to the map
-        map.addLayer(powerPlantsLayer);
-
-        // Create the layer control and add it to the map
         var layerControl = L.control.layers(baseMaps, overlayMaps).addTo(map);
 
-        // Initially hide terrain complexity layer
-        map.removeLayer(terrainComp);
-
-        // Function to create popup content
-        function createPopupContent(feature) {
-            const props = feature.properties;
-            return `
-                        <div class="popup-content">
-                            <h5>${props.name}</h5>
-                            <p><strong>Status:</strong> ${props.status}</p>
-                            <p><strong>Effect:</strong> ${props.effect} MW</p>
-                            <p><strong>Municipality:</strong> ${props.municipality}</p>
-                            <p><strong>County:</strong> ${props.county}</p>
-                            <a href="/PowerPlant/Details/${props.id}" class="btn btn-sm btn-info">Details</a>
-                        </div>
-                    `;
-        }
-
-        // Function to determine marker color based on status
-        function getColor(status) {
-            if (status === 'I drift') return '#28a745'; // Green for operational
-            if (status === 'Under bygging') return '#ffc107'; // Yellow for under construction
-            return '#007bff'; // Blue default
-        }
-
-        // Fetch GeoJSON data from our API endpoint
+        // Power plants layer
+        var powerPlantsLayer = L.layerGroup().addTo(map);
+        layerControl.addOverlay(powerPlantsLayer, "Power Plants");
         fetch('/Map/GeoJson')
-            .then(response => response.json())
+            .then(r => r.json())
             .then(data => {
-                console.log('GeoJSON data received:', data);
-                console.log('Features count:', data.features ? data.features.length : 0);
-
-                // Add GeoJSON layer to power plants layer group instead of directly to map
                 L.geoJSON(data, {
-                    pointToLayer: function (feature, latlng) {
-                        console.log('Processing feature:', feature);
-                        return L.circleMarker(latlng, {
-                            radius: 8,
-                            fillColor: getColor(feature.properties.status),
-                            color: '#000',
-                            weight: 1,
-                            opacity: 1,
-                            fillOpacity: 0.8
-                        });
-                    },
-                    onEachFeature: function (feature, layer) {
-                        layer.bindPopup(createPopupContent(feature));
+                    pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+                        radius: 8,
+                        fillColor: feature.properties.status === 'I drift' ? '#28a745'
+                            : feature.properties.status === 'Under bygging' ? '#ffc107'
+                                : '#007bff',
+                        color: '#000',
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    }),
+                    onEachFeature: (feature, layer) => {
+                        const p = feature.properties;
+                        layer.bindPopup(`
+                      <div>
+                        <h5>${p.name}</h5>
+                        <p><strong>Status:</strong> ${p.status}</p>
+                        <p><strong>Effect:</strong> ${p.effect} MW</p>
+                        <p><strong>Municipality:</strong> ${p.municipality}</p>
+                        <p><strong>County:</strong> ${p.county}</p>
+                        <a href="/PowerPlant/Details/${p.id}" class="btn btn-sm btn-info">Details</a>
+                      </div>
+                    `);
                     }
-                }).addTo(powerPlantsLayer); // Add to layer group instead of map
+                }).addTo(powerPlantsLayer);
             })
-            .catch(error => {
-                console.error('Error loading GeoJSON data:', error);
-                alert('Failed to load map data. Please try again later.');
-            });
+            .catch(err => console.error('Error loading power plants:', err));
 
-        // Add geocoder control for location search functionality
-        var geocoder = L.Control.geocoder({
-            defaultMarkGeocode: false, // Disable default marker
-            placeholder: "Søk..."
-        }).addTo(map);
+        // Flood zones layer with on-the-fly reprojection
+        var floodLayer = L.layerGroup().addTo(map);
+        layerControl.addOverlay(floodLayer, "Flomsoner");
+        fetch('/Map/FloodGeoJson')
+            .then(r => r.json())
+            .then(fc => {
+                console.log('Fetched flood zones:', fc);
+                L.geoJSON(fc, {
+                    coordsToLatLng: coords => {
+                        const p = proj4('EPSG:32633', 'EPSG:4326', coords);
+                        console.log('Reprojecting', coords, '→ [lng,lat]', p);
+                        return L.latLng(p[1], p[0]);
+                    },
+                    style: {
+                        color: '#0077be',
+                        weight: 2,
+                        fillOpacity: 0.4
+                    },
+                    onEachFeature: (feature, layer) => {
+                        layer.bindPopup(`<b>Zone ID:</b> ${feature.properties.fid}`);
+                    }
+                }).addTo(floodLayer);
+            })
+            .catch(err => console.error('Flood zones load error', err));
 
-        // Add tooltip to geocoder control
+        // Geocoder control
+        var geocoder = L.Control.geocoder({ defaultMarkGeocode: false, placeholder: "Søk..." })
+            .addTo(map);
         geocoder.getContainer().setAttribute('title', 'Søk etter steder');
-
-        // Handle geocoding results
         geocoder.on('markgeocode', function (e) {
-            var latlng = e.geocode.center;
-            map.setView(latlng, 16); // Zoom to location
-            L.marker(latlng).addTo(map) // Add marker
-                .bindPopup(e.geocode.name)
-                .openPopup();
+            map.setView(e.geocode.center, 16);
+            L.marker(e.geocode.center).addTo(map)
+                .bindPopup(e.geocode.name).openPopup();
         });
+
+        // (Optional) Your WFS and click‐to‐info code can follow here…
     </script>
 }

@@ -137,5 +137,23 @@ namespace Prosjektoppgave_218.Controllers
                 return View("Map");
             }
         }
+
+        // GET: Map/FloodGeoJson
+        [HttpGet]
+        public async Task<IActionResult> FloodGeoJson()
+        {
+            try
+            {
+                _powerPlantService.SetTableName("Flomsoner");
+                var geojson = await _powerPlantService.GetFloodZonesGeoJsonAsync();
+                return Content(geojson, "application/json");
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Failed to load flood zones");
+                return StatusCode(500, e.Message);
+            }
+        }
+
     }
 }

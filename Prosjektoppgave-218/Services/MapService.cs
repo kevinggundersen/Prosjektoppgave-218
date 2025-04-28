@@ -218,5 +218,28 @@ namespace Prosjektoppgave_218.Services
             var plants = await GetPowerPlantsAsync("id", "eq", id.ToString());
             return plants.FirstOrDefault();
         }
+
+        public async Task<string> GetFloodZonesGeoJsonAsync()
+        {
+            // change table name
+            var request = new RestRequest($"/rest/v1/Flomsoner");
+            request.Method = Method.Get;
+            request.AddHeader("apikey", _supabaseKey);
+            request.AddHeader("Authorization", $"Bearer {_supabaseKey}");
+            // select only the json column
+            request.AddQueryParameter("select", "geojson");
+            var resp = await _client.ExecuteAsync(request);
+            var zones = JsonConvert.DeserializeObject<List<FloodZoneModel>>(resp.Content);
+            Console.WriteLine($"Got {zones.Count} zones; sample 1: {zones.FirstOrDefault()?.GeoJsonFeature}");
+
+            var fc = new
+            {
+                type = "FeatureCollection",
+                features = zones
+                .Select(z => z.GeoJsonFeature)   // each is already a GeoJSON Feature
+                .ToArray()
+            };
+            return JsonConvert.SerializeObject(fc);
+        }
     }
 }
