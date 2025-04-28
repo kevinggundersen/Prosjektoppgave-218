@@ -126,28 +126,37 @@
 
         // Flood zones layer with on-the-fly reprojection
         var floodLayer = L.layerGroup().addTo(map);
-        layerControl.addOverlay(floodLayer, "Flomsoner");
-        fetch('/Map/FloodGeoJson')
-            .then(r => r.json())
-            .then(fc => {
-                console.log('Fetched flood zones:', fc);
-                L.geoJSON(fc, {
-                    coordsToLatLng: coords => {
-                        const p = proj4('EPSG:32633', 'EPSG:4326', coords);
-                        console.log('Reprojecting', coords, '→ [lng,lat]', p);
-                        return L.latLng(p[1], p[0]);
-                    },
-                    style: {
-                        color: '#0077be',
-                        weight: 2,
-                        fillOpacity: 0.4
-                    },
-                    onEachFeature: (feature, layer) => {
-                        layer.bindPopup(`<b>Zone ID:</b> ${feature.properties.fid}`);
-                    }
-                }).addTo(floodLayer);
-            })
-            .catch(err => console.error('Flood zones load error', err));
+        layerControl.addOverlay(floodLayer, 'Flomsoner');
+
+        // helper to request only the current bbox
+        function loadFloodInView() {
+            const b = map.getBounds();
+            const sw = b.getSouthWest();
+            const ne = b.getNorthEast();
+
+            fetch(`/Map/FloodInView?minx=${sw.lng}&miny=${sw.lat}` +
+                `&maxx=${ne.lng}&maxy=${ne.lat}`)
+                .then(r => r.json())
+                .then(fc => {
+                    floodLayer.clearLayers();
+                    L.geoJSON(fc, {
+                        coordsToLatLng: coords => {
+                            var p = proj4('EPSG:32633', 'EPSG:4326', coords);
+                            return L.latLng(p[1], p[0]);
+                        },
+                        style: { color: '#0077be', weight: 2, fillOpacity: 0.4 },
+                        onEachFeature: (f, layer) =>
+                            layer.bindPopup(`<b>Zone ID:</b> ${f.properties.fid}`)
+                    }).addTo(floodLayer);
+                })
+                .catch(err => console.error('Flood In-View load error', err));
+        }
+
+        // load initially
+        loadFloodInView();
+
+        // reload each time the user pans or zooms
+        map.on('moveend', loadFloodInView);
 
         // Geocoder control
         var geocoder = L.Control.geocoder({ defaultMarkGeocode: false, placeholder: "Søk..." })

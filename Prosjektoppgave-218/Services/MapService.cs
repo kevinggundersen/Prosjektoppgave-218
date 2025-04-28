@@ -241,5 +241,39 @@ namespace Prosjektoppgave_218.Services
             };
             return JsonConvert.SerializeObject(fc);
         }
+
+        /// <summary>
+        /// Fetch only the flood zones whose geometry intersects the given bounding box (in EPSG:32633)
+        /// </summary>
+        public async Task<string> GetFloodZonesInBBoxAsync(
+    double minx, double miny, double maxx, double maxy)
+        {
+            var req = new RestRequest("/rest/v1/rpc/get_flomsoner_bbox", Method.Post);
+            req.AddHeader("apikey", _supabaseKey);
+            req.AddHeader("Authorization", $"Bearer {_supabaseKey}");
+
+            // send JSON keys matching your SQL function parameters:
+            req.AddJsonBody(new
+            {
+                min_lng = minx,   // west
+                min_lat = miny,   // south
+                max_lng = maxx,   // east
+                max_lat = maxy    // north
+            });
+
+            var resp = await _client.ExecuteAsync(req);
+            if (!resp.IsSuccessful)
+                throw new Exception($"Supabase RPC error: {resp.Content}");
+
+            var zones = JsonConvert.DeserializeObject<List<FloodZoneModel>>(resp.Content);
+            var fc = new
+            {
+                type = "FeatureCollection",
+                features = zones.Select(z => z.GeoJsonFeature).ToArray()
+            };
+            return JsonConvert.SerializeObject(fc);
+        }
+
+
     }
 }

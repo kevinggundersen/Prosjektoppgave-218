@@ -155,5 +155,28 @@ namespace Prosjektoppgave_218.Controllers
             }
         }
 
+        // GET: Map/FloodInView?minx=…&miny=…&maxx=…&maxy=…
+        [HttpGet]
+        public async Task<IActionResult> FloodInView(
+            double minx, double miny,
+            double maxx, double maxy)
+        {
+            try
+            {
+                // make sure your service has this new method
+                var geojson = await _powerPlantService
+                                          .GetFloodZonesInBBoxAsync(minx, miny, maxx, maxy);
+                return Content(geojson, "application/json");
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Failed to load flood zones in view");
+                return StatusCode(500, e.Message);
+            }
+        }
+
+
     }
+
+
 }
