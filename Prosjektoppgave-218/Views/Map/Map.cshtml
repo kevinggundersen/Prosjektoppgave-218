@@ -78,10 +78,18 @@
             attribution: '&copy; Kartverket'
         }).addTo(map);
 
+        var elveg2 = L.tileLayer.wms('https://wms.geonorge.no/skwms1/wms.vegnett2', {
+            layers: 'vegnett2',
+            format: 'image/png',
+            transparent: true,
+            attribution: '&copy; Kartverket'
+        }).addTo(map);
+
         // Layer control
         var baseMaps = { "Kartverket": kartverket };
         var overlayMaps = {
-            "Matrikkelkart": matrikkelkart
+            "Matrikkelkart": matrikkelkart,
+            "Vegnett":elveg2
         };
         var layerControl = L.control.layers(baseMaps, overlayMaps).addTo(map);
 
