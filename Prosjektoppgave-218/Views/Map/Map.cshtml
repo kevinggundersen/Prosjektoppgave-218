@@ -29,11 +29,14 @@
 
     <!-- Proj4 and Proj4Leaflet for reprojecting EPSG:32633 → EPSG:4326 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
 
     <script>
         // Define UTM zone 33N projection
         proj4.defs("EPSG:32633", "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs");
+        // Define EPSG:25832 projection (for your new layers)
+        proj4.defs("EPSG:25832", "+proj=utm +zone=32 +ellps=GRS80 +units=m +no_defs");
 
         console.log("Map script loaded");
 
@@ -93,8 +96,6 @@
         };
         var layerControl = L.control.layers(baseMaps, overlayMaps).addTo(map);
 
-        
-
         // Flood zones layer with on-the-fly reprojection
         var floodLayer = L.layerGroup().addTo(map);
         layerControl.addOverlay(floodLayer, 'Flomsoner');
@@ -105,10 +106,14 @@
             const sw = b.getSouthWest();
             const ne = b.getNorthEast();
 
-            fetch(`/Map/FloodInView?minx=${sw.lng}&miny=${sw.lat}` +
-                `&maxx=${ne.lng}&maxy=${ne.lat}`)
-                .then(r => r.json())
+            console.log(`Fetching flood data for bounds: SW(${sw.lng}, ${sw.lat}), NE(${ne.lng}, ${ne.lat})`);
+            fetch(`/Map/FloodInView?minx=${sw.lng}&miny=${sw.lat}&maxx=${ne.lng}&maxy=${ne.lat}`)
+                .then(r => {
+                    console.log("Flood data request successful:", r);
+                    return r.json();
+                })
                 .then(fc => {
+                    console.log("Flood GeoJSON received:", fc);
                     floodLayer.clearLayers();
                     L.geoJSON(fc, {
                         coordsToLatLng: coords => {
@@ -119,6 +124,7 @@
                         onEachFeature: (f, layer) =>
                             layer.bindPopup(`<b>Zone ID:</b> ${f.properties.fid}`)
                     }).addTo(floodLayer);
+                    console.log('Flood layer added to map.');
                 })
                 .catch(err => console.error('Flood In-View load error', err));
         }
@@ -140,5 +146,67 @@
         });
 
         // (Optional) Your WFS and click‐to‐info code can follow here…
+        function transformCoordinates(feature) {
+            if (feature.geometry && feature.geometry.coordinates) {
+                if (feature.geometry.type === 'Point') {
+                    const transformed = proj4("EPSG:25832", "EPSG:4326", feature.geometry.coordinates);
+                    feature.geometry.coordinates = [transformed[0], transformed[1]];
+                    console.log("Transformed Point:", feature.geometry.coordinates);
+                } else if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
+                    feature.geometry.coordinates = feature.geometry.coordinates.map(level1 => {
+                        return level1.map(level2 => {
+                            return level2.map(coord => {
+                                const transformed = proj4("EPSG:25832", "EPSG:4326", coord);
+                                return [transformed[0], transformed[1]];
+                            });
+                        });
+                    });
+                    console.log("Transformed Polygon/MultiPolygon:", feature.geometry.coordinates);
+                }
+            }
+            return feature;
+        }
+
+        function addGeoJsonLayer(url, layerName, color) {
+            console.log(`Fetching ${layerName} data from: ${url}`);
+            fetch(url)
+                .then(response => {
+                    console.log(`${layerName} data request successful:`, response);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log(`${layerName} GeoJSON received:`, data);
+                    if (data && data.features) {
+                        console.log(`Processing ${data.features.length} features for ${layerName}`);
+                        data.features = data.features.map(transformCoordinates);
+                        L.geoJSON(data, {
+                            style: {
+                                color: color,
+                                weight: 1,
+                                opacity: 0.8,
+                                fillOpacity: 0.3
+                            },
+                            onEachFeature: function (feature, layer) {
+                                if (feature.properties && feature.properties.id) {
+                                    layer.bindPopup(`${layerName} ID: ${feature.properties.id}`);
+                                }
+                            }
+                        }).addTo(map);
+                        console.log(`${layerName} layer added to map.`);
+                    } else {
+                        console.error(`Invalid GeoJSON format for ${layerName}`, data);
+                    }
+                })
+                .catch(error => {
+                    console.error(`Error fetching ${layerName} data:`, error);
+                });
+        }
+
+        // Add the new layers
+        addGeoJsonLayer('/Map/SykehusGeoJson', 'Sykehus', 'blue');
+        addGeoJsonLayer('/Map/PolitiFengselGeoJson', 'Politi/Fengsel', 'green');
+        addGeoJsonLayer('/Map/BrannAmbulanseGeoJson', 'Brann/Ambulanse', 'red');
     </script>
+
+
 }

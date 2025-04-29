@@ -6,6 +6,8 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Linq;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 namespace Prosjektoppgave_218.Services
 {
@@ -15,13 +17,15 @@ namespace Prosjektoppgave_218.Services
         private readonly string _supabaseKey;
         private readonly RestClient _client;
         private string _tableName;
+        private readonly ILogger<MapService> _logger;
 
-        public MapService(IConfiguration configuration)
+        public MapService(IConfiguration configuration, ILogger<MapService> logger)
         {
             _supabaseUrl = configuration["Supabase:Url"];
             _supabaseKey = configuration["Supabase:ApiKey"];
             _client = new RestClient(_supabaseUrl);
             _tableName = "Vindkraftverk"; // Default table name
+            _logger = logger;
         }
 
         /// <summary>
@@ -99,30 +103,29 @@ namespace Prosjektoppgave_218.Services
                 request.AddQueryParameter(filterColumn, $"{filterOperator}.{filterValue}");
             }
 
-            var response = await _client.ExecuteAsync(request);
-
-            if (!response.IsSuccessful)
-            {
-                throw new Exception($"Failed to retrieve power plant data: {response.Content}");
-            }
-
-            // For debugging, output the first portion of the response
-            Console.WriteLine($"Sample of response data: {response.Content.Substring(0, Math.Min(200, response.Content.Length))}");
-
+            RestResponse<List<PowerPlant>> response = null;
             try
             {
-                var powerPlants = JsonConvert.DeserializeObject<List<PowerPlant>>(response.Content);
-                Console.WriteLine($"Successfully deserialized {powerPlants.Count} power plants");
+                response = await _client.ExecuteAsync<List<PowerPlant>>(request);
+
+                if (!response.IsSuccessful)
+                {
+                    throw new Exception($"Failed to retrieve power plant data: {response.Content}");
+                }
+
+                // For debugging, output the first portion of the response
+                Console.WriteLine($"Sample of response data: {response.Content.Substring(0, Math.Min(200, response.Content.Length))}");
+                Console.WriteLine($"Successfully retrieved {response.Data?.Count ?? 0} power plants");
 
                 // Check how many have valid GeoJSON data
-                int plantsWithGeoJson = powerPlants.Count(p => p.CoordGeoJson != null);
+                int plantsWithGeoJson = response.Data?.Count(p => p.CoordGeoJson != null) ?? 0;
                 Console.WriteLine($"{plantsWithGeoJson} plants have CoordGeoJson data");
 
-                return powerPlants;
+                return response.Data ?? new List<PowerPlant>();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error deserializing power plants: {ex.Message}");
+                Console.WriteLine($"Error retrieving power plants: {ex.Message}");
                 throw;
             }
         }
@@ -228,25 +231,35 @@ namespace Prosjektoppgave_218.Services
             request.AddHeader("Authorization", $"Bearer {_supabaseKey}");
             // select only the json column
             request.AddQueryParameter("select", "geojson");
-            var resp = await _client.ExecuteAsync(request);
-            var zones = JsonConvert.DeserializeObject<List<FloodZoneModel>>(resp.Content);
-            Console.WriteLine($"Got {zones.Count} zones; sample 1: {zones.FirstOrDefault()?.GeoJsonFeature}");
 
-            var fc = new
+            RestResponse<List<FloodZoneModel>> resp = null;
+            try
             {
-                type = "FeatureCollection",
-                features = zones
-                .Select(z => z.GeoJsonFeature)   // each is already a GeoJSON Feature
-                .ToArray()
-            };
-            return JsonConvert.SerializeObject(fc);
+                resp = await _client.ExecuteAsync<List<FloodZoneModel>>(request);
+                var zones = resp.Data ?? new List<FloodZoneModel>();
+                Console.WriteLine($"Got {zones.Count} zones; sample 1: {zones.FirstOrDefault()?.GeoJsonFeature}");
+
+                var fc = new
+                {
+                    type = "FeatureCollection",
+                    features = zones
+                        .Select(z => z.GeoJsonFeature)    // each is already a GeoJSON Feature
+                        .ToArray()
+                };
+                return JsonConvert.SerializeObject(fc);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Error fetching flood zones: {e.Message}");
+                return null;
+            }
         }
 
         /// <summary>
         /// Fetch only the flood zones whose geometry intersects the given bounding box (in EPSG:32633)
         /// </summary>
         public async Task<string> GetFloodZonesInBBoxAsync(
-    double minx, double miny, double maxx, double maxy)
+            double minx, double miny, double maxx, double maxy)
         {
             var req = new RestRequest("/rest/v1/rpc/get_flomsoner_bbox", Method.Post);
             req.AddHeader("apikey", _supabaseKey);
@@ -255,25 +268,147 @@ namespace Prosjektoppgave_218.Services
             // send JSON keys matching your SQL function parameters:
             req.AddJsonBody(new
             {
-                min_lng = minx,   // west
-                min_lat = miny,   // south
-                max_lng = maxx,   // east
-                max_lat = maxy    // north
+                min_lng = minx,    // west
+                min_lat = miny,    // south
+                max_lng = maxx,    // east
+                max_lat = maxy     // north
             });
 
-            var resp = await _client.ExecuteAsync(req);
-            if (!resp.IsSuccessful)
-                throw new Exception($"Supabase RPC error: {resp.Content}");
-
-            var zones = JsonConvert.DeserializeObject<List<FloodZoneModel>>(resp.Content);
-            var fc = new
+            RestResponse<List<FloodZoneModel>> resp = null;
+            try
             {
-                type = "FeatureCollection",
-                features = zones.Select(z => z.GeoJsonFeature).ToArray()
-            };
-            return JsonConvert.SerializeObject(fc);
+                resp = await _client.ExecuteAsync<List<FloodZoneModel>>(req);
+                if (!resp.IsSuccessful)
+                    throw new Exception($"Supabase RPC error: {resp.Content}");
+
+                var zones = resp.Data ?? new List<FloodZoneModel>();
+                var fc = new
+                {
+                    type = "FeatureCollection",
+                    features = zones.Select(z => z.GeoJsonFeature).ToArray()
+                };
+                return JsonConvert.SerializeObject(fc);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Error fetching flood zones in bounding box: {e.Message}");
+                return null;
+            }
         }
 
+        // In MapService.cs
 
+        public async Task<string> GetSykehusGeoJsonAsync()
+        {
+            _logger.LogInformation("Fetching Sykehus GeoJSON data.");
+            var request = new RestRequest($"/rest/v1/Sykehus");
+            request.Method = Method.Get;
+            request.AddHeader("apikey", _supabaseKey);
+            request.AddHeader("Authorization", $"Bearer {_supabaseKey}");
+            request.AddQueryParameter("select", "id, geojson");
+
+            try
+            {
+                var response = await _client.ExecuteAsync(request); // Execute without generic type first
+
+                _logger.LogInformation($"Raw Sykehus response: {response.Content}"); // Log the raw content
+
+                if (!response.IsSuccessful)
+                {
+                    _logger.LogError($"Supabase error fetching Sykehus: {response.StatusCode} - {response.Content}");
+                    return null;
+                }
+
+                // Now deserialize the successful response
+                var data = JsonConvert.DeserializeObject<List<GeoJsonDataModel>>(response.Content);
+                _logger.LogInformation($"Successfully fetched {data?.Count ?? 0} Sykehus records.");
+
+                var featureCollection = new
+                {
+                    type = "FeatureCollection",
+                    features = data?.Select(item => item.GeoJsonFeature).ToArray() ?? new JObject[0]
+                };
+                var jsonResult = JsonConvert.SerializeObject(featureCollection);
+                _logger.LogInformation($"Serialized Sykehus GeoJSON: {jsonResult}");
+                return jsonResult;
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Error processing Sykehus GeoJSON.");
+                return null;
+            }
+        }
+
+        public async Task<string> GetPolitiFengselGeoJsonAsync()
+        {
+            _logger.LogInformation("Fetching Politi/Fengsel GeoJSON data.");
+            var request = new RestRequest($"/rest/v1/Politi_fengsel");
+            request.Method = Method.Get;
+            request.AddHeader("apikey", _supabaseKey);
+            request.AddHeader("Authorization", $"Bearer {_supabaseKey}");
+            request.AddQueryParameter("select", "id, geojson");
+
+            try
+            {
+                var response = await _client.ExecuteAsync<List<GeoJsonDataModel>>(request);
+                if (!response.IsSuccessful)
+                {
+                    _logger.LogError($"Supabase error fetching Politi/Fengsel: {response.StatusCode} - {response.Content}");
+                    return null;
+                }
+                var data = response.Data;
+                _logger.LogInformation($"Successfully fetched {data?.Count ?? 0} Politi/Fengsel records.");
+
+                var featureCollection = new
+                {
+                    type = "FeatureCollection",
+                    features = data?.Select(item => item.GeoJsonFeature).ToArray() ?? new JObject[0]
+                };
+                var jsonResult = JsonConvert.SerializeObject(featureCollection);
+                _logger.LogInformation($"Serialized Politi/Fengsel GeoJSON: {jsonResult}");
+                return jsonResult;
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Error processing Politi/Fengsel GeoJSON.");
+                return null;
+            }
+        }
+
+        public async Task<string> GetBrannAmbulanseGeoJsonAsync()
+        {
+            _logger.LogInformation("Fetching Brann/Ambulanse GeoJSON data.");
+            var request = new RestRequest($"/rest/v1/Brann_ambulanse");
+            request.Method = Method.Get;
+            request.AddHeader("apikey", _supabaseKey);
+            request.AddHeader("Authorization", $"Bearer {_supabaseKey}");
+            request.AddQueryParameter("select", "id, geojson");
+
+            try
+            {
+                var response = await _client.ExecuteAsync<List<GeoJsonDataModel>>(request);
+                if (!response.IsSuccessful)
+                {
+                    _logger.LogError($"Supabase error fetching Brann/Ambulanse: {response.StatusCode} - {response.Content}");
+                    return null;
+                }
+                var data = response.Data;
+                _logger.LogInformation($"Successfully fetched {data?.Count ?? 0} Brann/Ambulanse records.");
+
+                var featureCollection = new
+                {
+                    type = "FeatureCollection",
+                    features = data?.Select(item => item.GeoJsonFeature).ToArray() ?? new JObject[0]
+                };
+                var jsonResult = JsonConvert.SerializeObject(featureCollection);
+                _logger.LogInformation($"Serialized Brann/Ambulanse GeoJSON: {jsonResult}");
+                return jsonResult;
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Error processing Brann/Ambulanse GeoJSON.");
+                return null;
+            }
+        }
     }
 }

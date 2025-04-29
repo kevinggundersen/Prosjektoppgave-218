@@ -175,7 +175,55 @@ namespace Prosjektoppgave_218.Controllers
             }
         }
 
+        // In MapController.cs
 
+        // GET: Map/SykehusGeoJson
+        [HttpGet]
+        public async Task<IActionResult> SykehusGeoJson()
+        {
+            try
+            {
+                var geojson = await _powerPlantService.GetSykehusGeoJsonAsync();
+                return Content(geojson, "application/json");
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Failed to load sykehus data");
+                return StatusCode(500, e.Message);
+            }
+        }
+
+        // GET: Map/PolitiFengselGeoJson
+        [HttpGet]
+        public async Task<IActionResult> PolitiFengselGeoJson()
+        {
+            try
+            {
+                var geojson = await _powerPlantService.GetPolitiFengselGeoJsonAsync();
+                return Content(geojson, "application/json");
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Failed to load politi og fengsel data");
+                return StatusCode(500, e.Message);
+            }
+        }
+
+        // GET: Map/BrannAmbulanseGeoJson
+        [HttpGet]
+        public async Task<IActionResult> BrannAmbulanseGeoJson()
+        {
+            try
+            {
+                var geojson = await _powerPlantService.GetBrannAmbulanseGeoJsonAsync();
+                return Content(geojson, "application/json");
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Failed to load brann og ambulanse data");
+                return StatusCode(500, e.Message);
+            }
+        }
     }
 
 
