@@ -350,13 +350,16 @@ namespace Prosjektoppgave_218.Services
 
             try
             {
-                var response = await _client.ExecuteAsync<List<GeoJsonDataModel>>(request);
+                var response = await _client.ExecuteAsync(request); // No generic type initially
+
+                _logger.LogInformation($"Raw Politi/Fengsel response: {response.Content}"); // Log raw content
+
                 if (!response.IsSuccessful)
                 {
                     _logger.LogError($"Supabase error fetching Politi/Fengsel: {response.StatusCode} - {response.Content}");
                     return null;
                 }
-                var data = response.Data;
+                var data = JsonConvert.DeserializeObject<List<GeoJsonDataModel>>(response.Content);
                 _logger.LogInformation($"Successfully fetched {data?.Count ?? 0} Politi/Fengsel records.");
 
                 var featureCollection = new
@@ -386,13 +389,16 @@ namespace Prosjektoppgave_218.Services
 
             try
             {
-                var response = await _client.ExecuteAsync<List<GeoJsonDataModel>>(request);
+                var response = await _client.ExecuteAsync(request); // No generic type initially
+
+                _logger.LogInformation($"Raw Politi/Fengsel response: {response.Content}"); // Log raw content
+
                 if (!response.IsSuccessful)
                 {
                     _logger.LogError($"Supabase error fetching Brann/Ambulanse: {response.StatusCode} - {response.Content}");
                     return null;
                 }
-                var data = response.Data;
+                var data = JsonConvert.DeserializeObject<List<GeoJsonDataModel>>(response.Content);
                 _logger.LogInformation($"Successfully fetched {data?.Count ?? 0} Brann/Ambulanse records.");
 
                 var featureCollection = new
