@@ -43,7 +43,7 @@
         // Initialize map
         var map = L.map('map').setView([58.1633, 8.0025], 8);
 
-        // Helper for WMS GetFeatureInfo
+        // Helper for WMS GetFeatureInfo (keep if needed for other layers)
         function getFeatureInfoUrl(map, latlng, baseUrl, options) {
             const point = map.latLngToContainerPoint(latlng, map.getZoom());
             const size = map.getSize();
@@ -73,7 +73,6 @@
             attribution: '&copy; Kartverket'
         }).addTo(map);
 
-
         var matrikkelkart = L.tileLayer.wms('https://wms.geonorge.no/skwms1/wms.matrikkelkart', {
             layers: 'Matrikkelkart',
             format: 'image/png',
@@ -92,7 +91,8 @@
         var sykehusLayer = L.layerGroup();
         var politiLayer = L.layerGroup();
         var brannLayer = L.layerGroup();
-        var floodLayer = L.layerGroup().addTo(map); // Keep floodLayer added initially if you want it visible by default
+        // Create a separate layer group for flood zones to manage them easily
+        var floodLayerGroup = L.layerGroup().addTo(map); // Add to map initially
 
         // Layer control
         var baseMaps = { "Kartverket": kartverket };
@@ -103,11 +103,9 @@
             "Politi/Fengsel": politiLayer,
             "Brann/Ambulanse": brannLayer
         };
-        var layerControl = L.control.layers(baseMaps, overlayMaps).addTo(map);
-
-        // Flood zones layer with on-the-fly reprojection
-        var floodLayer = L.layerGroup().addTo(map);
-        layerControl.addOverlay(floodLayer, 'Flomsoner');
+        // Add the flood layer group to the control
+        var layerControl = L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
+        layerControl.addOverlay(floodLayerGroup, 'Flomsoner'); // Add the layer group to the control
 
         // helper to request only the current bbox
         function loadFloodInView() {
@@ -115,73 +113,79 @@
             const sw = b.getSouthWest();
             const ne = b.getNorthEast();
 
-            console.log(`Fetching flood data for bounds: SW(${sw.lng}, ${sw.lat}), NE(${ne.lng}, ${ne.lat})`);
+            // The server function get_flomsoner_bbox expects min_lng, min_lat, max_lng, max_lat.
+            // Assuming the server function is designed to receive WGS84 bounds
+            // (which Leaflet's getBounds() provides) and perform the
+            // intersection check against the EPSG:32633 flood zone data internally,
+            // sending WGS84 bounds directly is correct.
+
+            console.log(`Workspaceing flood data for bounds (WGS84): SW(${sw.lng}, ${sw.lat}), NE(${ne.lng}, ${ne.lat})`);
+
             fetch(`/Map/FloodInView?minx=${sw.lng}&miny=${sw.lat}&maxx=${ne.lng}&maxy=${ne.lat}`)
                 .then(r => {
+                    if (!r.ok) {
+                        console.error("Flood data request failed:", r.status, r.statusText);
+                        return Promise.reject('Network response was not ok.');
+                    }
                     console.log("Flood data request successful:", r);
                     return r.json();
                 })
                 .then(fc => {
                     console.log("Flood GeoJSON received:", fc);
-                    
-                    // Check if the GeoJSON is valid
-                    if (!fc || !fc.type || fc.type !== 'FeatureCollection' || !fc.features) {
-                        console.error('Invalid GeoJSON structure received:', fc);
+
+                    // Check if the GeoJSON is valid and is a FeatureCollection
+                    if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
+                        console.error('Invalid or empty GeoJSON FeatureCollection structure received:', fc);
+                        // Clear the layer group if invalid data is received
+                        floodLayerGroup.clearLayers();
                         return;
                     }
-                    
+
                     console.log(`Processing ${fc.features.length} flood zone features`);
-                    
-                    // Clear existing layers
-                    floodLayer.clearLayers();
-                    
-                    // Process each feature
-                    fc.features.forEach((feature, index) => {
-                        console.log(`Processing feature ${index}:`, feature);
-                        
-                        // Check if the feature has a valid geometry
-                        if (!feature.geometry || !feature.geometry.type || !feature.geometry.coordinates) {
-                            console.warn(`Feature ${index} has invalid geometry:`, feature);
-                            return;
+
+                    // Clear existing layers from the floodLayer group
+                    floodLayerGroup.clearLayers();
+
+                    // Add the entire FeatureCollection as a single L.geoJSON layer
+                    // Use the coordsToLatLng option to reproject from EPSG:32633
+                    L.geoJSON(fc, {
+                        // Define the function to transform coordinates from EPSG:32633 to EPSG:4326
+                        coordsToLatLng: coords => {
+                            // 'coords' here is a single [x, y] array representing one vertex
+                            // This function is called for EVERY coordinate in the geometry
+                            try {
+                                // proj4 expects [x, y], returns [longitude, latitude]
+                                var p = proj4('EPSG:32633', 'EPSG:4326', coords);
+                                // Leaflet expects LatLng(latitude, longitude)
+                                return L.latLng(p[1], p[0]);
+                            } catch (e) {
+                                console.error("Error transforming flood zone coordinates:", coords, e);
+                                // Return a dummy LatLng or null to indicate an issue
+                                return L.latLng(0, 0); // Or return null, though Leaflet might error
+                            }
+                        },
+                        style: {
+                            color: '#0077be', // Style for the flood zones (polygons)
+                            weight: 2,
+                            fillOpacity: 0.4
+                        },
+                        onEachFeature: (feature, layer) => {
+                            // Add popup with feature properties
+                            var props = feature.properties || {};
+                            // Adjust property name based on the console output: 'fid' seems like a good candidate for display
+                            var popupContent = `<b>Zone ID:</b> ${props.fid || 'N/A'}<br>`;
+                            // Add other relevant properties from the 'properties' object in the console output if needed
+                            // e.g., popupContent += `<b>Interval:</b> ${props.gjentaksintervall || 'N/A'}`;
+                            layer.bindPopup(popupContent);
                         }
-                        
-                        // Create a GeoJSON layer for this feature
-                        try {
-                            L.geoJSON(feature, {
-                                coordsToLatLng: coords => {
-                                    // Check if we need to transform coordinates
-                                    if (feature.geometry.type === 'Point') {
-                                        var p = proj4('EPSG:32633', 'EPSG:4326', coords);
-                                        return L.latLng(p[1], p[0]);
-                                    } else if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
-                                        // For polygons, we need to transform each coordinate
-                                        return coords.map(coord => {
-                                            var p = proj4('EPSG:32633', 'EPSG:4326', coord);
-                                            return L.latLng(p[1], p[0]);
-                                        });
-                                    }
-                                    return L.latLng(coords[1], coords[0]);
-                                },
-                                style: { color: '#0077be', weight: 2, fillOpacity: 0.4 },
-                                onEachFeature: (f, layer) => {
-                                    // Add popup with feature properties
-                                    var props = f.properties || {};
-                                    var popupContent = `<b>Zone ID:</b> ${props.fid || 'N/A'}`;
-                                    layer.bindPopup(popupContent);
-                                }
-                            }).addTo(floodLayer);
-                            console.log(`Feature ${index} added to map successfully`);
-                        } catch (err) {
-                            console.error(`Error adding feature ${index} to map:`, err);
-                        }
-                    });
-                    
+                    }).addTo(floodLayerGroup); // Add the new L.geoJSON layer to the floodLayer group
+
                     console.log('Flood layer processing complete');
                 })
                 .catch(err => {
                     console.error('Flood In-View load error', err);
-                    // Clear the layer to avoid showing stale data
-                    floodLayer.clearLayers();
+                    // Clear the layer group on error
+                    floodLayerGroup.clearLayers();
                 });
         }
 
