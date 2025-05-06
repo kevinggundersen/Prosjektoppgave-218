@@ -237,21 +237,38 @@ namespace Prosjektoppgave_218.Services
             {
                 resp = await _client.ExecuteAsync<List<FloodZoneModel>>(request);
                 var zones = resp.Data ?? new List<FloodZoneModel>();
-                Console.WriteLine($"Got {zones.Count} zones; sample 1: {zones.FirstOrDefault()?.GeoJsonFeature}");
-
+                _logger.LogInformation($"Got {zones.Count} flood zones from database");
+                
+                // Filter out any null features and ensure valid GeoJSON structure
+                var validFeatures = zones
+                    .Select(z => z.GetValidGeoJsonFeature())
+                    .Where(f => f != null)
+                    .ToArray();
+                
+                _logger.LogInformation($"Processed {validFeatures.Length} valid flood zone features");
+                
+                if (validFeatures.Length == 0)
+                {
+                    _logger.LogWarning("No valid flood zone features found in the response");
+                    // Return an empty feature collection instead of null
+                    return JsonConvert.SerializeObject(new { type = "FeatureCollection", features = new JObject[0] });
+                }
+                
                 var fc = new
                 {
                     type = "FeatureCollection",
-                    features = zones
-                        .Select(z => z.GeoJsonFeature)    // each is already a GeoJSON Feature
-                        .ToArray()
+                    features = validFeatures
                 };
-                return JsonConvert.SerializeObject(fc);
+                
+                var result = JsonConvert.SerializeObject(fc);
+                _logger.LogInformation($"Generated GeoJSON with {validFeatures.Length} features");
+                return result;
             }
             catch (Exception e)
             {
-                Console.WriteLine($"Error fetching flood zones: {e.Message}");
-                return null;
+                _logger.LogError(e, $"Error fetching flood zones: {e.Message}");
+                // Return an empty feature collection instead of null
+                return JsonConvert.SerializeObject(new { type = "FeatureCollection", features = new JObject[0] });
             }
         }
 
@@ -282,17 +299,38 @@ namespace Prosjektoppgave_218.Services
                     throw new Exception($"Supabase RPC error: {resp.Content}");
 
                 var zones = resp.Data ?? new List<FloodZoneModel>();
+                _logger.LogInformation($"Retrieved {zones.Count} flood zones for bbox: {minx},{miny},{maxx},{maxy}");
+                
+                // Filter out any null features and ensure valid GeoJSON structure
+                var validFeatures = zones
+                    .Select(z => z.GetValidGeoJsonFeature())
+                    .Where(f => f != null)
+                    .ToArray();
+                
+                _logger.LogInformation($"Processed {validFeatures.Length} valid flood zone features");
+                
+                if (validFeatures.Length == 0)
+                {
+                    _logger.LogWarning("No valid flood zone features found in the response");
+                    // Return an empty feature collection instead of null
+                    return JsonConvert.SerializeObject(new { type = "FeatureCollection", features = new JObject[0] });
+                }
+                
                 var fc = new
                 {
                     type = "FeatureCollection",
-                    features = zones.Select(z => z.GeoJsonFeature).ToArray()
+                    features = validFeatures
                 };
-                return JsonConvert.SerializeObject(fc);
+                
+                var result = JsonConvert.SerializeObject(fc);
+                _logger.LogInformation($"Generated GeoJSON with {validFeatures.Length} features");
+                return result;
             }
             catch (Exception e)
             {
-                Console.WriteLine($"Error fetching flood zones in bounding box: {e.Message}");
-                return null;
+                _logger.LogError(e, $"Error fetching flood zones in bounding box: {e.Message}");
+                // Return an empty feature collection instead of null
+                return JsonConvert.SerializeObject(new { type = "FeatureCollection", features = new JObject[0] });
             }
         }
 

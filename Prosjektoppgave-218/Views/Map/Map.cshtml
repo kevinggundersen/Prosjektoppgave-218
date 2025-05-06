@@ -88,11 +88,20 @@
             attribution: '&copy; Kartverket'
         }).addTo(map);
 
+        // Layer groups for the new point layers
+        var sykehusLayer = L.layerGroup();
+        var politiLayer = L.layerGroup();
+        var brannLayer = L.layerGroup();
+        var floodLayer = L.layerGroup().addTo(map); // Keep floodLayer added initially if you want it visible by default
+
         // Layer control
         var baseMaps = { "Kartverket": kartverket };
         var overlayMaps = {
             "Matrikkelkart": matrikkelkart,
-            "Vegnett":elveg2
+            "Vegnett": elveg2,
+            "Sykehus": sykehusLayer,
+            "Politi/Fengsel": politiLayer,
+            "Brann/Ambulanse": brannLayer
         };
         var layerControl = L.control.layers(baseMaps, overlayMaps).addTo(map);
 
@@ -114,19 +123,66 @@
                 })
                 .then(fc => {
                     console.log("Flood GeoJSON received:", fc);
+                    
+                    // Check if the GeoJSON is valid
+                    if (!fc || !fc.type || fc.type !== 'FeatureCollection' || !fc.features) {
+                        console.error('Invalid GeoJSON structure received:', fc);
+                        return;
+                    }
+                    
+                    console.log(`Processing ${fc.features.length} flood zone features`);
+                    
+                    // Clear existing layers
                     floodLayer.clearLayers();
-                    L.geoJSON(fc, {
-                        coordsToLatLng: coords => {
-                            var p = proj4('EPSG:32633', 'EPSG:4326', coords);
-                            return L.latLng(p[1], p[0]);
-                        },
-                        style: { color: '#0077be', weight: 2, fillOpacity: 0.4 },
-                        onEachFeature: (f, layer) =>
-                            layer.bindPopup(`<b>Zone ID:</b> ${f.properties.fid}`)
-                    }).addTo(floodLayer);
-                    console.log('Flood layer added to map.');
+                    
+                    // Process each feature
+                    fc.features.forEach((feature, index) => {
+                        console.log(`Processing feature ${index}:`, feature);
+                        
+                        // Check if the feature has a valid geometry
+                        if (!feature.geometry || !feature.geometry.type || !feature.geometry.coordinates) {
+                            console.warn(`Feature ${index} has invalid geometry:`, feature);
+                            return;
+                        }
+                        
+                        // Create a GeoJSON layer for this feature
+                        try {
+                            L.geoJSON(feature, {
+                                coordsToLatLng: coords => {
+                                    // Check if we need to transform coordinates
+                                    if (feature.geometry.type === 'Point') {
+                                        var p = proj4('EPSG:32633', 'EPSG:4326', coords);
+                                        return L.latLng(p[1], p[0]);
+                                    } else if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
+                                        // For polygons, we need to transform each coordinate
+                                        return coords.map(coord => {
+                                            var p = proj4('EPSG:32633', 'EPSG:4326', coord);
+                                            return L.latLng(p[1], p[0]);
+                                        });
+                                    }
+                                    return L.latLng(coords[1], coords[0]);
+                                },
+                                style: { color: '#0077be', weight: 2, fillOpacity: 0.4 },
+                                onEachFeature: (f, layer) => {
+                                    // Add popup with feature properties
+                                    var props = f.properties || {};
+                                    var popupContent = `<b>Zone ID:</b> ${props.fid || 'N/A'}`;
+                                    layer.bindPopup(popupContent);
+                                }
+                            }).addTo(floodLayer);
+                            console.log(`Feature ${index} added to map successfully`);
+                        } catch (err) {
+                            console.error(`Error adding feature ${index} to map:`, err);
+                        }
+                    });
+                    
+                    console.log('Flood layer processing complete');
                 })
-                .catch(err => console.error('Flood In-View load error', err));
+                .catch(err => {
+                    console.error('Flood In-View load error', err);
+                    // Clear the layer to avoid showing stale data
+                    floodLayer.clearLayers();
+                });
         }
 
         // load initially
@@ -167,7 +223,7 @@
             return feature;
         }
 
-        function addGeoJsonLayer(url, layerName, color) {
+        function addPointGeoJsonLayer(url, layerGroup, layerName, color) {
             console.log(`Fetching ${layerName} data from: ${url}`);
             fetch(url)
                 .then(response => {
@@ -178,21 +234,23 @@
                     console.log(`${layerName} GeoJSON received:`, data);
                     if (data && data.features) {
                         console.log(`Processing ${data.features.length} features for ${layerName}`);
-                        data.features = data.features.map(transformCoordinates);
-                        L.geoJSON(data, {
-                            style: {
-                                color: color,
-                                weight: 1,
-                                opacity: 0.8,
-                                fillOpacity: 0.3
-                            },
-                            onEachFeature: function (feature, layer) {
-                                if (feature.properties && feature.properties.id) {
-                                    layer.bindPopup(`${layerName} ID: ${feature.properties.id}`);
-                                }
+                        data.features.forEach(feature => {
+                            const transformedFeature = transformCoordinates(feature);
+                            if (transformedFeature.geometry && transformedFeature.geometry.type === 'Point' && transformedFeature.geometry.coordinates) {
+                                L.circleMarker([transformedFeature.geometry.coordinates[1], transformedFeature.geometry.coordinates[0]], {
+                                    radius: 5,
+                                    fillColor: color,
+                                    color: color,
+                                    weight: 1,
+                                    opacity: 1,
+                                    fillOpacity: 0.8
+                                }).bindPopup(`${layerName} ID: ${transformedFeature.properties.id}`).addTo(layerGroup);
+                            } else {
+                                console.warn(`Feature missing point geometry for ${layerName}:`, feature);
                             }
-                        }).addTo(map);
-                        console.log(`${layerName} layer added to map.`);
+                        });
+                        // No need to addTo(map) here, the layerGroup is added to the control
+                        console.log(`${layerName} points added to layer group.`);
                     } else {
                         console.error(`Invalid GeoJSON format for ${layerName}`, data);
                     }
@@ -202,10 +260,10 @@
                 });
         }
 
-        // Add the new layers
-        addGeoJsonLayer('/Map/SykehusGeoJson', 'Sykehus', 'blue');
-        addGeoJsonLayer('/Map/PolitiFengselGeoJson', 'Politi/Fengsel', 'green');
-        addGeoJsonLayer('/Map/BrannAmbulanseGeoJson', 'Brann/Ambulanse', 'red');
+        // Add the new point layers using the dedicated function
+        addPointGeoJsonLayer('/Map/SykehusGeoJson', sykehusLayer, 'Sykehus', 'blue');
+        addPointGeoJsonLayer('/Map/PolitiFengselGeoJson', politiLayer, 'Politi/Fengsel', 'green');
+        addPointGeoJsonLayer('/Map/BrannAmbulanseGeoJson', brannLayer, 'Brann/Ambulanse', 'red');
     </script>
 
 
