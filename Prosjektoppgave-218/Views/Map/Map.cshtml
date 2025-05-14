@@ -31,6 +31,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@@turf/turf@6/turf.min.js"></script>
 
     <script>
         // Define UTM zone 33N projection
@@ -113,13 +114,7 @@
             const sw = b.getSouthWest();
             const ne = b.getNorthEast();
 
-            // The server function get_flomsoner_bbox expects min_lng, min_lat, max_lng, max_lat.
-            // Assuming the server function is designed to receive WGS84 bounds
-            // (which Leaflet's getBounds() provides) and perform the
-            // intersection check against the EPSG:32633 flood zone data internally,
-            // sending WGS84 bounds directly is correct.
-
-            console.log(`Workspaceing flood data for bounds (WGS84): SW(${sw.lng}, ${sw.lat}), NE(${ne.lng}, ${ne.lat})`);
+            console.log(`Loading flood data for bounds (WGS84): SW(${sw.lng}, ${sw.lat}), NE(${ne.lng}, ${ne.lat})`);
 
             fetch(`/Map/FloodInView?minx=${sw.lng}&miny=${sw.lat}&maxx=${ne.lng}&maxy=${ne.lat}`)
                 .then(r => {
@@ -127,64 +122,56 @@
                         console.error("Flood data request failed:", r.status, r.statusText);
                         return Promise.reject('Network response was not ok.');
                     }
-                    console.log("Flood data request successful:", r);
                     return r.json();
                 })
                 .then(fc => {
                     console.log("Flood GeoJSON received:", fc);
 
-                    // Check if the GeoJSON is valid and is a FeatureCollection
+                    // Validate GeoJSON
                     if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
                         console.error('Invalid or empty GeoJSON FeatureCollection structure received:', fc);
-                        // Clear the layer group if invalid data is received
                         floodLayerGroup.clearLayers();
                         return;
                     }
 
-                    console.log(`Processing ${fc.features.length} flood zone features`);
+                    // Filter out invalid features
+                    const validFeatures = fc.features.filter(feature => {
+                        return feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon');
+                    });
 
-                    // Clear existing layers from the floodLayer group
+                    if (validFeatures.length === 0) {
+                        console.warn("No valid polygon features found in the GeoJSON data.");
+                        floodLayerGroup.clearLayers();
+                        return;
+                    }
+
+                    // Clear existing layers and add new polygons
                     floodLayerGroup.clearLayers();
-
-                    // Add the entire FeatureCollection as a single L.geoJSON layer
-                    // Use the coordsToLatLng option to reproject from EPSG:32633
-                    L.geoJSON(fc, {
-                        // Define the function to transform coordinates from EPSG:32633 to EPSG:4326
+                    L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                         coordsToLatLng: coords => {
-                            // 'coords' here is a single [x, y] array representing one vertex
-                            // This function is called for EVERY coordinate in the geometry
                             try {
-                                // proj4 expects [x, y], returns [longitude, latitude]
-                                var p = proj4('EPSG:32633', 'EPSG:4326', coords);
-                                // Leaflet expects LatLng(latitude, longitude)
+                                const p = proj4('EPSG:32633', 'EPSG:4326', coords);
                                 return L.latLng(p[1], p[0]);
                             } catch (e) {
                                 console.error("Error transforming flood zone coordinates:", coords, e);
-                                // Return a dummy LatLng or null to indicate an issue
-                                return L.latLng(0, 0); // Or return null, though Leaflet might error
+                                return L.latLng(0, 0);
                             }
                         },
                         style: {
-                            color: '#0077be', // Style for the flood zones (polygons)
+                            color: '#0077be',
                             weight: 2,
                             fillOpacity: 0.4
                         },
-                        onEachFeature: (feature, layer) => {
-                            // Add popup with feature properties
-                            var props = feature.properties || {};
-                            // Adjust property name based on the console output: 'fid' seems like a good candidate for display
-                            var popupContent = `<b>Zone ID:</b> ${props.fid || 'N/A'}<br>`;
-                            // Add other relevant properties from the 'properties' object in the console output if needed
-                            // e.g., popupContent += `<b>Interval:</b> ${props.gjentaksintervall || 'N/A'}`;
-                            layer.bindPopup(popupContent);
-                        }
-                    }).addTo(floodLayerGroup); // Add the new L.geoJSON layer to the floodLayer group
+                        interactive: false // ⬅️ disables pointer events on the polygon
+                    }).addTo(floodLayerGroup);
 
-                    console.log('Flood layer processing complete');
+                    console.log('Flood layer updated.');
+
+                    // Trigger the intersection check after polygons are loaded
+                    checkPointIntersections();
                 })
                 .catch(err => {
                     console.error('Flood In-View load error', err);
-                    // Clear the layer group on error
                     floodLayerGroup.clearLayers();
                 });
         }
@@ -193,7 +180,7 @@
         loadFloodInView();
 
         // reload each time the user pans or zooms
-        map.on('moveend', loadFloodInView);
+        map.on('moveend', loadFloodInView, debounce(loadFloodInView, 500));
 
         // Geocoder control
         var geocoder = L.Control.geocoder({ defaultMarkGeocode: false, placeholder: "Søk..." })
@@ -205,7 +192,6 @@
                 .bindPopup(e.geocode.name).openPopup();
         });
 
-        // (Optional) Your WFS and click‐to‐info code can follow here…
         function transformCoordinates(feature) {
             if (feature.geometry && feature.geometry.coordinates) {
                 if (feature.geometry.type === 'Point') {
@@ -227,6 +213,45 @@
             return feature;
         }
 
+
+        function debounce(func, wait) {
+            let timeout;
+            return function (...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+
+        //Checks if points intercect with polygons
+        function checkPointIntersections() {
+            console.log("Checking point intersections with flood zones...");
+
+            const criticalLayers = [sykehusLayer, politiLayer, brannLayer];
+
+            const floodPolygons = [];
+            floodLayerGroup.eachLayer(layer => {
+            const geo = transformPolygonGeoJsonCoords(layer.toGeoJSON());
+            if (geo && geo.geometry && (geo.geometry.type === 'Polygon' || geo.geometry.type === 'MultiPolygon')) {
+                floodPolygons.push(geo);
+            } else {
+                    console.warn("Skipping invalid flood layer:", layer);
+                }
+            });
+
+            criticalLayers.forEach(layerGroup => {
+                layerGroup.eachLayer(pointLayer => {
+                    const point = pointLayer.toGeoJSON();
+                    for (let poly of floodPolygons) {
+                        if (turf.booleanPointInPolygon(point, poly)) {
+                            console.log("⚠️ Intersecting point found:", pointLayer);
+                            break;
+                        }
+                    }
+                });
+            });
+        }
+
+
         function addPointGeoJsonLayer(url, layerGroup, layerName, color) {
             console.log(`Fetching ${layerName} data from: ${url}`);
             fetch(url)
@@ -241,19 +266,41 @@
                         data.features.forEach(feature => {
                             const transformedFeature = transformCoordinates(feature);
                             if (transformedFeature.geometry && transformedFeature.geometry.type === 'Point' && transformedFeature.geometry.coordinates) {
-                                L.circleMarker([transformedFeature.geometry.coordinates[1], transformedFeature.geometry.coordinates[0]], {
+                                const pointLatLng = [transformedFeature.geometry.coordinates[1], transformedFeature.geometry.coordinates[0]];
+
+                                // Check for intersection with flood zones
+                                let intersects = false;
+                                
+                                const pointGeoJson = turf.point([pointLatLng[1], pointLatLng[0]]); // [lng, lat]
+                                console.log("Point:", pointGeoJson);
+                                floodLayerGroup.eachLayer(layer => {
+                                    const polygonGeoJson = transformPolygonGeoJsonCoords(layer.toGeoJSON());
+                                    console.log("Polygon:", polygonGeoJson);
+                                    if (polygonGeoJson.geometry.type === 'Polygon' || polygonGeoJson.geometry.type === 'MultiPolygon') {
+                                        if (turf.booleanPointInPolygon(pointGeoJson, polygonGeoJson)) {
+                                            intersects = true;
+                                        }
+                                    }
+                                });
+
+                                // Change color if intersects
+                                const pointColor = intersects ? 'orange' : color;
+
+                                // Add the point to the map
+                                L.circleMarker(pointLatLng, {
                                     radius: 5,
-                                    fillColor: color,
-                                    color: color,
+                                    fillColor: pointColor,
+                                    color: pointColor,
                                     weight: 1,
                                     opacity: 1,
                                     fillOpacity: 0.8
-                                }).bindPopup(`${layerName} ID: ${transformedFeature.properties.id}`).addTo(layerGroup);
+                                })
+                                .bindPopup(`${layerName} ID: ${transformedFeature.properties.id}<br>Intersects Flood Zone: ${intersects ? 'Yes' : 'No'}`)
+                                .addTo(layerGroup);
                             } else {
                                 console.warn(`Feature missing point geometry for ${layerName}:`, feature);
                             }
                         });
-                        // No need to addTo(map) here, the layerGroup is added to the control
                         console.log(`${layerName} points added to layer group.`);
                     } else {
                         console.error(`Invalid GeoJSON format for ${layerName}`, data);
@@ -268,6 +315,41 @@
         addPointGeoJsonLayer('/Map/SykehusGeoJson', sykehusLayer, 'Sykehus', 'blue');
         addPointGeoJsonLayer('/Map/PolitiFengselGeoJson', politiLayer, 'Politi/Fengsel', 'green');
         addPointGeoJsonLayer('/Map/BrannAmbulanseGeoJson', brannLayer, 'Brann/Ambulanse', 'red');
+
+        //Helper function to transform polygons
+                function transformPolygonGeoJsonCoords(feature) {
+            if (!feature || !feature.geometry || !feature.geometry.coordinates) {
+                console.warn("Invalid feature passed to transformPolygonGeoJsonCoords:", feature);
+                return null;
+            }
+
+            const type = feature.geometry.type;
+            const coords = feature.geometry.coordinates;
+
+            try {
+                const transformed = JSON.parse(JSON.stringify(feature)); // deep copy
+
+                if (type === 'Polygon') {
+                    transformed.geometry.coordinates = coords.map(ring =>
+                        ring.map(coord => proj4("EPSG:32633", "EPSG:4326", coord))
+                    );
+                } else if (type === 'MultiPolygon') {
+                    transformed.geometry.coordinates = coords.map(polygon =>
+                        polygon.map(ring =>
+                            ring.map(coord => proj4("EPSG:32633", "EPSG:4326", coord))
+                        )
+                    );
+                } else {
+                    console.warn("Unsupported geometry type in transformPolygonGeoJsonCoords:", type);
+                    return null;
+                }
+
+                return transformed;
+            } catch (e) {
+                console.error("Error transforming coordinates in transformPolygonGeoJsonCoords:", e);
+                return null;
+            }
+        }
     </script>
 
 
