@@ -1,0 +1,448 @@
+﻿@{
+    ViewData["Title"] = "Kart";
+}
+
+<div class="container-fluid" id="mapcontainer">
+    <h1></h1>
+
+    <div id="map" style="height: 600px; width: 100%;"></div>
+</div>
+
+@section Styles {
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin="" />
+
+    <!-- Leaflet Control Geocoder CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+}
+
+
+
+@section Scripts {
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+                  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+                  crossorigin=""></script>
+
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@@turf/turf@6/turf.min.js"></script>
+
+    <script>
+        // Define projections
+        proj4.defs("EPSG:32633", "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs");
+        proj4.defs("EPSG:25832", "+proj=utm +zone=32 +ellps=GRS80 +units=m +no_defs"); // Used for point layers
+
+        console.log("Map script loaded");
+
+        let pointsLoaded = false;
+        let polygonsLoaded = false;
+
+        let allCriticalPoints = [];
+
+        // Define the custom icon for intersecting points
+        // You'll need to replace '/images/warning-icon.png' with the actual path to your icon image
+        // You might need different anchor/popupAnchor depending on the icon size and design
+        const intersectingIcon = L.icon({
+            iconUrl: '/images/warning-icon.png', // <-- REPLACE WITH YOUR ICON PATH if you haven't already
+            iconSize: [25, 25], // size of the icon
+            iconAnchor: [12, 25], // point from which the icon will be centered
+            popupAnchor: [0, -25] // point from which the popup should open relative to the iconAnchor
+        });
+
+        // Initialize map
+        var map = L.map('map').setView([58.1633, 8.0025], 8);
+
+        // Helper for WMS GetFeatureInfo (keep if needed for other layers)
+        function getFeatureInfoUrl(map, latlng, baseUrl, options) {
+            const point = map.latLngToContainerPoint(latlng, map.getZoom());
+            const size = map.getSize();
+            const params = {
+                request: 'GetFeatureInfo',
+                service: 'WMS',
+                srs: 'EPSG:3857',
+                styles: '',
+                transparent: true,
+                version: '1.3.0',
+                format: 'image/png',
+                bbox: map.getBounds().toBBoxString(),
+                height: size.y,
+                width: size.x,
+                layers: options.layers,
+                query_layers: options.query_layers,
+                info_format: options.info_format,
+                i: Math.floor(point.x),
+                j: Math.floor(point.y)
+            };
+            return baseUrl + L.Util.getParamString(params, baseUrl, true);
+        }
+
+        // Base layers
+        var kartverket = L.tileLayer('https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png', {
+            maxZoom: 19,
+            attribution: '&copy; Kartverket'
+        }).addTo(map);
+
+        var matrikkelkart = L.tileLayer.wms('https://wms.geonorge.no/skwms1/wms.matrikkelkart', {
+            layers: 'Matrikkelkart',
+            format: 'image/png',
+            transparent: true,
+            attribution: '&copy; Kartverket'
+        }).addTo(map);
+
+        var elveg2 = L.tileLayer.wms('https://wms.geonorge.no/skwms1/wms.vegnett2', {
+            layers: 'vegnett2',
+            format: 'image/png',
+            transparent: true,
+            attribution: '&copy; Kartverket'
+        }).addTo(map);
+
+        // Layer groups for the new point layers
+        var sykehusLayer = L.layerGroup();
+        var politiLayer = L.layerGroup();
+        var brannLayer = L.layerGroup();
+        // Create a separate layer group for flood zones to manage them easily
+        var floodLayerGroup = L.layerGroup().addTo(map); // Add to map initially
+
+        // Layer control
+        var baseMaps = { "Kartverket": kartverket };
+        var overlayMaps = {
+            "Matrikkelkart": matrikkelkart,
+            "Vegnett": elveg2,
+            "Sykehus": sykehusLayer,
+            "Politi/Fengsel": politiLayer,
+            "Brann/Ambulanse": brannLayer
+        };
+        // Add the flood layer group to the control
+        var layerControl = L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
+        layerControl.addOverlay(floodLayerGroup, 'Flomsoner'); // Add the layer group to the control
+
+        // helper to request only the current bbox
+        function loadFloodInView() {
+            const b = map.getBounds();
+            const sw = b.getSouthWest();
+            const ne = b.getNorthEast();
+            polygonsLoaded = false; // Reset loaded state before fetch
+            console.log(`Loading flood data for bounds (WGS84): SW(${sw.lng}, ${sw.lat}), NE(${ne.lng}, ${ne.lat})`);
+
+            fetch(`/Map/FloodInView?minx=${sw.lng}&miny=${sw.lat}&maxx=${ne.lng}&maxy=${ne.lat}`)
+                .then(r => {
+                    if (!r.ok) {
+                        console.error("Flood data request failed:", r.status, r.statusText);
+                        return Promise.reject('Network response was not ok.');
+                    }
+                    return r.json();
+                })
+                .then(fc => {
+                    // console.log("Flood GeoJSON received:", fc); // Too verbose perhaps
+
+                    if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
+                        console.error('Invalid or empty GeoJSON FeatureCollection structure received:', fc);
+                        floodLayerGroup.clearLayers();
+                        polygonsLoaded = true;
+                        if (pointsLoaded) checkPointIntersections();
+                        return;
+                    }
+
+                    const validFeatures = fc.features.filter(feature => {
+                        return feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon');
+                    });
+
+                    if (validFeatures.length === 0) {
+                        console.warn("No valid polygon features found in the GeoJSON data.");
+                        floodLayerGroup.clearLayers();
+                        polygonsLoaded = true;
+                        if (pointsLoaded) checkPointIntersections();
+                        return;
+                    }
+
+                    floodLayerGroup.clearLayers();
+
+                    L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
+                        coordsToLatLng: coords => {
+                            try {
+                                const p = proj4('EPSG:32633', 'EPSG:4326', coords);
+                                return L.latLng(p[1], p[0]);
+                            } catch (e) {
+                                console.error("Error transforming flood zone coordinates:", coords, e);
+                                return L.latLng(0, 0);
+                            }
+                        },
+                        style: {
+                            color: '#0077be',
+                            weight: 2,
+                            fillOpacity: 0.4
+                        },
+                        interactive: false
+                    }).addTo(floodLayerGroup);
+
+                    console.log('Flood layer updated with ' + validFeatures.length + ' features.');
+
+                    polygonsLoaded = true;
+                    if (pointsLoaded) {
+                        checkPointIntersections();
+                    }
+                })
+                .catch(err => {
+                    console.error('Flood In-View load error', err);
+                    floodLayerGroup.clearLayers();
+                    polygonsLoaded = true;
+                    if (pointsLoaded) checkPointIntersections();
+                });
+        }
+
+        // load initially
+        loadFloodInView();
+
+        // reload each time the user pans or zooms (debounced)
+        map.on('moveend', debounce(loadFloodInView, 500));
+
+        // Geocoder control
+        var geocoder = L.Control.geocoder({ defaultMarkGeocode: false, placeholder: "Søk..." })
+            .addTo(map);
+        geocoder.getContainer().setAttribute('title', 'Søk etter steder');
+        geocoder.on('markgeocode', function (e) {
+            map.setView(e.geocode.center, 16);
+            L.marker(e.geocode.center).addTo(map)
+                .bindPopup(e.geocode.name).openPopup();
+        });
+
+        // Helper function to transform point coordinates from EPSG:25832 to EPSG:4326
+        function transformCoordinates(feature) {
+            if (feature.geometry && feature.geometry.coordinates) {
+                if (feature.geometry.type === 'Point') {
+                    try {
+                        const transformed = proj4("EPSG:25832", "EPSG:4326", feature.geometry.coordinates);
+                        feature.geometry.coordinates = [transformed[0], transformed[1]]; // [lng, lat]
+                    } catch (e) {
+                        console.error("Error transforming point coordinates:", feature.geometry.coordinates, e);
+                        feature.geometry.coordinates = null; // Invalidate coordinates
+                    }
+                }
+            }
+            return feature;
+        }
+
+
+        function debounce(func, wait) {
+            let timeout;
+            return function (...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+
+        // Helper to get feature name, with fallback to ID or default
+                function getFeatureName(feature) {
+                    const props = feature.properties;
+                    if (!props) return 'Unknown Feature (no properties)';
+
+                    // 1. Check for your specific desired property first
+                    // *** IMPORTANT: Ensure 'bygningsnummer' matches the EXACT property name from your GeoJSON ***
+                    if (props.hasOwnProperty('bygningsnummer') && props['bygningsnummer'] !== null && props['bygningsnummer'] !== undefined) {
+                        const value = props['bygningsnummer'];
+                        // Check if it's a non-empty string, OR if it's a number (if bygningsnummer can be a number)
+                        if ((typeof value === 'string' && value.trim() !== '') || typeof value === 'number') {
+                             return `Bygningsnummer: ` + String(value); // Return it as a string
+                        }
+                    }
+
+                    // 2. If the specific property wasn't suitable, check other common name properties
+                    const otherNameKeys = ['name', 'navn', 'title', 'label']; // Other common property names
+                    for (const key of otherNameKeys) {
+                        if (props.hasOwnProperty(key) && props[key] !== null && props[key] !== undefined) {
+                            const value = props[key];
+                            if ((typeof value === 'string' && value.trim() !== '') || typeof value === 'number') {
+                                 return String(value);
+                            }
+                        }
+                    }
+
+
+                    // 3. Fallback to common ID properties
+                    if (props.hasOwnProperty('id') && props.id !== null && props.id !== undefined) {
+                        return `ID: ${props.id}`;
+                    }
+                    if (props.hasOwnProperty('gid') && props.gid !== null && props.gid !== undefined) {
+                        return `ID: ${props.gid}`;
+                    }
+
+                    return 'Unnamed Feature'; // Final fallback
+                }
+
+
+        //Checks if points intercect with polygons and updates their icon/popup
+        function checkPointIntersections() {
+            console.log("Checking point intersections...");
+
+            const floodPolygons = [];
+            // Collect GeoJSON features from the flood layer group
+            floodLayerGroup.eachLayer(layer => {
+                const geojson = layer.toGeoJSON();
+                if (geojson && geojson.features && geojson.features.length > 0) {
+                    const feature = geojson.features[0];
+                    if (feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')) {
+                        floodPolygons.push(feature);
+                    }
+                }
+            });
+
+            console.log(`Checking ${allCriticalPoints.length} points against ${floodPolygons.length} flood polygons.`);
+
+            allCriticalPoints.forEach(obj => {
+                if (!obj.feature.geometry || !obj.feature.geometry.coordinates) {
+                    return; // Skip points with invalid geometry
+                }
+
+                const coords = obj.feature.geometry.coordinates; // [lng, lat] in EPSG:4326
+                const point = turf.point([coords[0], coords[1]]);
+
+                let intersects = false;
+                let intersectingPolygonId = null; // Store ID of first intersecting polygon
+
+                for (let polyFeature of floodPolygons) {
+                    try {
+                        if (turf.booleanPointInPolygon(point, polyFeature)) {
+                            intersects = true;
+                            intersectingPolygonId = polyFeature.properties ? polyFeature.properties.flomsoneID : 'N/A';
+                            break;
+                        }
+                    } catch (e) {
+                        console.error("Error checking intersection for point", getFeatureName(obj.feature), "with polygon", polyFeature, e);
+                    }
+                }
+
+                // Update marker visibility based on intersection
+                const currentLayerGroup = obj.layerGroup;
+                const originalMarker = obj.originalMarker;
+                const intersectingMarker = obj.intersectingMarker;
+
+                const featureName = getFeatureName(obj.feature); // Get the name using the helper
+
+                if (intersects) {
+                    if (!obj.isIntersecting) {
+                        if (currentLayerGroup.hasLayer(originalMarker)) {
+                            currentLayerGroup.removeLayer(originalMarker);
+                        }
+                        if (!currentLayerGroup.hasLayer(intersectingMarker)) {
+                            currentLayerGroup.addLayer(intersectingMarker);
+                        }
+                        obj.isIntersecting = true;
+                    }
+                    // Update popup content on the intersecting marker
+                    let popupContent = `${featureName}<br><span style="color: orange; font-weight: bold;">Overlapper flomsone</span>`;
+                    if (intersectingPolygonId && intersectingPolygonId !== 'N/A') {
+                        popupContent += ` (ID: ${intersectingPolygonId})`;
+                    }
+                    intersectingMarker.setPopupContent(popupContent);
+
+                } else { // Does not intersect
+                    if (obj.isIntersecting) {
+                        if (currentLayerGroup.hasLayer(intersectingMarker)) {
+                            currentLayerGroup.removeLayer(intersectingMarker);
+                        }
+                        if (!currentLayerGroup.hasLayer(originalMarker)) {
+                            currentLayerGroup.addLayer(originalMarker);
+                        }
+                        obj.isIntersecting = false;
+                    }
+                    // Update popup content on the original marker
+                    const popupContent = `${featureName}<br>Overlapper flomsone: Nei`;
+                    originalMarker.setPopupContent(popupContent);
+                }
+            });
+
+            console.log("Intersection check complete.");
+        }
+
+
+        let loadedPointLayers = 0;
+        const totalPointLayers = 3;
+
+        function addPointGeoJsonLayer(url, layerGroup, layerName, color) {
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to load ${layerName} data: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log(`${layerName} GeoJSON received:`, data);
+                    if (data && data.features) {
+                        data.features.forEach(feature => {
+                            const transformedFeature = transformCoordinates(feature);
+
+                            if (transformedFeature && transformedFeature.geometry?.type === 'Point' && transformedFeature.geometry.coordinates) {
+                                const coords = transformedFeature.geometry.coordinates; // [lng, lat] in EPSG:4326
+                                const latlng = [coords[1], coords[0]]; // Leaflet expects LatLng [lat, lng]
+
+                                // Create the original circle marker
+                                const originalMarker = L.circleMarker(latlng, {
+                                    radius: 5,
+                                    fillColor: color,
+                                    color: color,
+                                    weight: 1,
+                                    opacity: 1,
+                                    fillOpacity: 0.8
+                                });
+
+                                // Create the intersecting icon marker
+                                const intersectingMarker = L.marker(latlng, { icon: intersectingIcon });
+
+                                // Add the original marker to the layer group initially
+                                originalMarker.addTo(layerGroup);
+
+                                // Get the feature name
+                                const featureName = getFeatureName(transformedFeature);
+
+                                // Initial popup content (will be updated by checkPointIntersections)
+                                const initialPopupContent = `${featureName}<br>Overlapper flomsone: Nei`;
+                                originalMarker.bindPopup(initialPopupContent);
+                                intersectingMarker.bindPopup(initialPopupContent); // Bind to both markers
+
+                                // Store both markers and state
+                                allCriticalPoints.push({
+                                    originalMarker: originalMarker,
+                                    intersectingMarker: intersectingMarker,
+                                    feature: transformedFeature,
+                                    layerName: layerName,
+                                    isIntersecting: false,
+                                    layerGroup: layerGroup
+                                });
+                            } else if (transformedFeature) {
+                                console.warn(`Feature for ${layerName} is not a Point or has invalid geometry after transformation:`, transformedFeature);
+                            } else {
+                                console.warn(`Feature for ${layerName} could not be transformed or is invalid:`, feature);
+                            }
+                        });
+                    } else {
+                        console.warn(`No features found for ${layerName} or invalid GeoJSON structure.`);
+                    }
+                })
+                .catch(error => {
+                    console.error(`Error loading ${layerName} GeoJSON:`, error);
+                })
+                .finally(() => {
+                    loadedPointLayers++;
+                    if (loadedPointLayers === totalPointLayers) {
+                        pointsLoaded = true;
+                        if (polygonsLoaded) {
+                            checkPointIntersections();
+                        }
+                    }
+                });
+        }
+
+        // Add the new point layers using the dedicated function
+        addPointGeoJsonLayer('/Map/SykehusGeoJson', sykehusLayer, 'Sykehus', 'blue');
+        addPointGeoJsonLayer('/Map/PolitiFengselGeoJson', politiLayer, 'Politi/Fengsel', 'green');
+        addPointGeoJsonLayer('/Map/BrannAmbulanseGeoJson', brannLayer, 'Brann/Ambulanse', 'red');
+
+    </script>
+
+}
